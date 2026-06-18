@@ -13,13 +13,13 @@ use std::time::{Duration, Instant};
 const DEADLINE: Duration = Duration::from_secs(5);
 
 /// A running `ptybridge` with a line-buffered view of its event stream.
-struct Daemon {
+struct Bridge {
     child: Child,
     stdin: ChildStdin,
     lines: Receiver<String>,
 }
 
-impl Daemon {
+impl Bridge {
     /// Spawn `ptybridge --cols <cols> --rows <rows> -- <command...>`.
     fn start(cols: u16, rows: u16, command: &[&str]) -> Self {
         let mut child = Command::new(env!("CARGO_BIN_EXE_ptybridge"))
@@ -44,7 +44,7 @@ impl Daemon {
             }
         });
 
-        Daemon {
+        Bridge {
             child,
             stdin,
             lines,
@@ -90,7 +90,7 @@ impl Daemon {
     }
 }
 
-impl Drop for Daemon {
+impl Drop for Bridge {
     fn drop(&mut self) {
         let _ = self.child.kill();
     }
@@ -98,77 +98,77 @@ impl Drop for Daemon {
 
 #[test]
 fn resize_is_acknowledged_with_grid_resize() {
-    let mut daemon = Daemon::start(20, 5, &["cat"]);
+    let mut bridge = Bridge::start(20, 5, &["cat"]);
     // The handshake reports the initial size.
-    daemon.wait_for(|line| line.contains(r#""t":"hello""#));
-    daemon.send(r#"{"t":"resize","cols":30,"rows":10}"#);
-    let line = daemon.wait_for(|line| line.contains(r#""t":"grid_resize""#));
+    bridge.wait_for(|line| line.contains(r#""t":"hello""#));
+    bridge.send(r#"{"t":"resize","cols":30,"rows":10}"#);
+    let line = bridge.wait_for(|line| line.contains(r#""t":"grid_resize""#));
     assert!(line.contains(r#""cols":30"#), "got: {line}");
     assert!(line.contains(r#""rows":10"#), "got: {line}");
-    daemon.send(r#"{"t":"shutdown"}"#);
+    bridge.send(r#"{"t":"shutdown"}"#);
 }
 
 #[test]
 fn input_reaches_the_child_and_is_echoed() {
-    let mut daemon = Daemon::start(20, 3, &["cat"]);
-    daemon.wait_for(|line| line.contains(r#""t":"hello""#));
+    let mut bridge = Bridge::start(20, 3, &["cat"]);
+    bridge.wait_for(|line| line.contains(r#""t":"hello""#));
     // The PTY echoes input and `cat` repeats the line; either way "hi" appears.
-    daemon.send(r#"{"t":"input","data":"hi\r"}"#);
+    bridge.send(r#"{"t":"input","data":"hi\r"}"#);
     let line =
-        daemon.wait_for(|line| line.contains(r#""t":"grid_line""#) && line.contains(r#""h""#));
+        bridge.wait_for(|line| line.contains(r#""t":"grid_line""#) && line.contains(r#""h""#));
     assert!(line.contains(r#""i""#), "got: {line}");
-    daemon.send(r#"{"t":"shutdown"}"#);
+    bridge.send(r#"{"t":"shutdown"}"#);
 }
 
 #[test]
 fn ping_is_answered_with_pong() {
-    let mut daemon = Daemon::start(10, 2, &["cat"]);
-    daemon.wait_for(|line| line.contains(r#""t":"hello""#));
-    daemon.send(r#"{"t":"ping","id":42}"#);
-    let line = daemon.wait_for(|line| line.contains(r#""t":"pong""#));
+    let mut bridge = Bridge::start(10, 2, &["cat"]);
+    bridge.wait_for(|line| line.contains(r#""t":"hello""#));
+    bridge.send(r#"{"t":"ping","id":42}"#);
+    let line = bridge.wait_for(|line| line.contains(r#""t":"pong""#));
     assert!(line.contains(r#""id":42"#), "got: {line}");
-    daemon.send(r#"{"t":"shutdown"}"#);
+    bridge.send(r#"{"t":"shutdown"}"#);
 }
 
 #[test]
 fn shutdown_exits_cleanly_and_reports_child_exit() {
-    let mut daemon = Daemon::start(10, 2, &["cat"]);
-    daemon.wait_for(|line| line.contains(r#""t":"hello""#));
-    daemon.send(r#"{"t":"shutdown"}"#);
-    daemon.wait_for(|line| line.contains(r#""t":"child_exit""#));
-    daemon.expect_exit();
+    let mut bridge = Bridge::start(10, 2, &["cat"]);
+    bridge.wait_for(|line| line.contains(r#""t":"hello""#));
+    bridge.send(r#"{"t":"shutdown"}"#);
+    bridge.wait_for(|line| line.contains(r#""t":"child_exit""#));
+    bridge.expect_exit();
 }
 
 #[test]
 fn an_over_long_control_line_is_rejected_and_the_session_resynchronizes() {
-    let mut daemon = Daemon::start(10, 2, &["cat"]);
-    daemon.wait_for(|line| line.contains(r#""t":"hello""#));
+    let mut bridge = Bridge::start(10, 2, &["cat"]);
+    bridge.wait_for(|line| line.contains(r#""t":"hello""#));
 
     // A line far past the reader's cap, never including a newline until the end.
     let mut huge = vec![b'x'; 2 * 1024 * 1024];
     huge.push(b'\n');
-    daemon.stdin.write_all(&huge).expect("write huge line");
-    daemon.stdin.flush().expect("flush huge line");
+    bridge.stdin.write_all(&huge).expect("write huge line");
+    bridge.stdin.flush().expect("flush huge line");
 
     // It must be answered with a parse error, not buffered without bound.
-    let line = daemon.wait_for(|line| line.contains(r#""t":"error""#));
+    let line = bridge.wait_for(|line| line.contains(r#""t":"error""#));
     assert!(line.contains(r#""code":"parse""#), "got: {line}");
 
     // The reader resynchronizes to the next newline, so a following ping works.
-    daemon.send(r#"{"t":"ping","id":7}"#);
-    let pong = daemon.wait_for(|line| line.contains(r#""t":"pong""#));
+    bridge.send(r#"{"t":"ping","id":7}"#);
+    let pong = bridge.wait_for(|line| line.contains(r#""t":"pong""#));
     assert!(pong.contains(r#""id":7"#), "got: {pong}");
-    daemon.send(r#"{"t":"shutdown"}"#);
+    bridge.send(r#"{"t":"shutdown"}"#);
 }
 
 #[test]
 fn signal_terminated_child_reports_a_signal_in_child_exit() {
     // `cat` blocks reading the PTY; a TERM signal terminates it, so child_exit
     // must carry the signal (with a null exit code) rather than a fabricated one.
-    let mut daemon = Daemon::start(10, 2, &["cat"]);
-    daemon.wait_for(|line| line.contains(r#""t":"hello""#));
-    daemon.send(r#"{"t":"signal","name":"TERM"}"#);
-    let line = daemon.wait_for(|line| line.contains(r#""t":"child_exit""#));
+    let mut bridge = Bridge::start(10, 2, &["cat"]);
+    bridge.wait_for(|line| line.contains(r#""t":"hello""#));
+    bridge.send(r#"{"t":"signal","name":"TERM"}"#);
+    let line = bridge.wait_for(|line| line.contains(r#""t":"child_exit""#));
     assert!(
         !line.contains(r#""signal":null"#),
         "expected a non-null signal, got: {line}"
@@ -177,26 +177,26 @@ fn signal_terminated_child_reports_a_signal_in_child_exit() {
         line.contains(r#""code":null"#),
         "expected a null code, got: {line}"
     );
-    daemon.expect_exit();
+    bridge.expect_exit();
 }
 
 #[test]
 fn spawn_failure_reports_a_spawn_error() {
-    let daemon = Daemon::start(10, 2, &["/nonexistent/ptybridge-cmd-xyz"]);
-    let line = daemon.wait_for(|line| line.contains(r#""t":"error""#));
+    let bridge = Bridge::start(10, 2, &["/nonexistent/ptybridge-cmd-xyz"]);
+    let line = bridge.wait_for(|line| line.contains(r#""t":"error""#));
     assert!(line.contains(r#""code":"spawn""#), "got: {line}");
 }
 
 #[test]
 fn stdin_eof_ends_the_session() {
-    let mut daemon = Daemon::start(10, 2, &["cat"]);
-    daemon.wait_for(|line| line.contains(r#""t":"hello""#));
+    let mut bridge = Bridge::start(10, 2, &["cat"]);
+    bridge.wait_for(|line| line.contains(r#""t":"hello""#));
     // Closing stdin (dropping the writer) must end the session like shutdown.
-    drop(std::mem::replace(&mut daemon.stdin, dummy_stdin()));
-    daemon.expect_exit();
+    drop(std::mem::replace(&mut bridge.stdin, dummy_stdin()));
+    bridge.expect_exit();
 }
 
-/// A throwaway stdin handle so `Daemon` keeps a valid field after we drop the
+/// A throwaway stdin handle so `Bridge` keeps a valid field after we drop the
 /// real one to signal EOF.
 fn dummy_stdin() -> ChildStdin {
     Command::new("true")

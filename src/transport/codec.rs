@@ -117,7 +117,7 @@ const EVENT_TYPES: &[&str] = &[
     "error",
 ];
 
-/// Control message types this daemon understands.
+/// Control message types this bridge understands.
 const CONTROL_TYPES: &[&str] = &["input", "resize", "signal", "ping", "shutdown"];
 
 /// Outcome of decoding one control line, mirroring the protocol's error rules.
@@ -248,7 +248,7 @@ mod tests {
 
     #[test]
     fn unknown_type_is_ignored() {
-        // Forward compatibility: a future control type the daemon doesn't know.
+        // Forward compatibility: a future control type the bridge doesn't know.
         assert!(matches!(
             decode_control(r#"{"t":"frobnicate","x":1}"#),
             Decoded::Ignore

@@ -17,8 +17,9 @@ See [`PROTOCOL.md`](./PROTOCOL.md) for the authoritative wire-format spec.
 
 Early development. One session per process over stdio: it streams incremental
 `grid_line` diffs (with scroll collapse, highlights, cursor, alt-screen, and
-title) and accepts input, resize, signal, ping, and shutdown control. The wire
-format is versioned at `hello.v = 1`.
+title), pushes lines that scroll off the top as `scrollback_push`, and accepts
+input, resize, signal, ping, and shutdown control. The wire format is versioned
+at `hello.v = 1`.
 
 ## Usage
 
@@ -30,7 +31,7 @@ $ ptybridge -- bash
 per line:
 
 ```jsonl
-{"t":"hello","proto":"ptybridge","v":1,"cols":80,"rows":24,"features":["scroll","alt_screen","title"]}
+{"t":"hello","proto":"ptybridge","v":1,"cols":80,"rows":24,"features":["scroll","scrollback","alt_screen","title"]}
 {"t":"grid_line","row":0,"col":0,"cells":[["$",0],[" ",0,79]]}
 {"t":"flush"}
 ```
@@ -40,6 +41,19 @@ stdin.
 
 Pass `--format msgpack` to carry the same messages as MessagePack instead — more
 compact and cheaper to parse for the high-frequency `grid_line` traffic.
+
+### Scrollback
+
+Lines that scroll off the top of the primary screen are emitted as
+`scrollback_push` (oldest first, same cell shape as `grid_line`) so the host can
+append them to its own buffer and scroll through history **locally** — ideal for
+a consumer that renders into a normal editor buffer (e.g. Vim/Neovim), where
+scrolling is native window movement with no round-trip to the bridge. The host
+owns the durable scrollback; the bridge transmits each line once as it leaves
+the grid, which also captures lines from bursts too fast to appear on screen.
+`--scrollback N` sets the per-chunk capture window (default 10000; `0` disables
+it and drops the `scrollback` feature). See `scrollback_push` in
+[`PROTOCOL.md`](./PROTOCOL.md).
 
 ## Reference host
 

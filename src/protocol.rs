@@ -170,7 +170,7 @@ pub enum CursorShape {
     Underline,
 }
 
-/// Messages emitted by the daemon (Daemon → Host).
+/// Messages emitted by the bridge (Bridge → Host).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "t")]
 pub enum Event {
@@ -209,6 +209,12 @@ pub enum Event {
         row: u16,
         col: u16,
         cells: Vec<Cell>,
+    },
+    #[serde(rename = "scrollback_push")]
+    ScrollbackPush {
+        /// Lines that scrolled off the top of the primary screen, oldest first.
+        /// Each is a `cells` array with the same shape as `grid_line.cells`.
+        lines: Vec<Vec<Cell>>,
     },
     #[serde(rename = "cursor")]
     Cursor {
@@ -249,7 +255,7 @@ impl Event {
     }
 }
 
-/// Messages received from the host (Host → Daemon).
+/// Messages received from the host (Host → Bridge).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "t")]
 pub enum Control {
@@ -330,6 +336,22 @@ mod tests {
             serde_json::to_string(&event).unwrap(),
             r#"{"t":"grid_line","row":3,"col":0,"cells":[["h",7],["e"],["l",7,3],[" ",0,5]]}"#
         );
+    }
+
+    #[test]
+    fn scrollback_push_serializes_lines_as_cell_arrays() {
+        let event = Event::ScrollbackPush {
+            lines: vec![
+                vec![Cell::new("o", 7), Cell::run("l", 7, 2), Cell::inherit("d")],
+                vec![Cell::new("n", 0)],
+            ],
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert_eq!(
+            json,
+            r#"{"t":"scrollback_push","lines":[[["o",7],["l",7,2],["d"]],[["n",0]]]}"#
+        );
+        assert_eq!(serde_json::from_str::<Event>(&json).unwrap(), event);
     }
 
     #[test]

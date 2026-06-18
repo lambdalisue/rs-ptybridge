@@ -14,6 +14,14 @@ fn frame(cols: u16, rows: u16, bytes: &[u8]) -> Vec<Event> {
     Renderer::default().frame(&emu.snapshot())
 }
 
+/// As [`frame`], but with a scrollback buffer so lines that leave the top of the
+/// screen surface as `scrollback_push`.
+fn frame_with_scrollback(cols: u16, rows: u16, bytes: &[u8]) -> Vec<Event> {
+    let mut emu = Emulator::with_scrollback(cols, rows, 100);
+    emu.feed(bytes);
+    Renderer::default().frame(&emu.snapshot())
+}
+
 #[test]
 fn plain_text() {
     insta::assert_json_snapshot!(frame(12, 2, b"hello world"));
@@ -22,6 +30,13 @@ fn plain_text() {
 #[test]
 fn two_lines_via_crlf() {
     insta::assert_json_snapshot!(frame(6, 3, b"ab\r\ncd\r\nef"));
+}
+
+#[test]
+fn scrollback_push_carries_lines_that_left_the_screen() {
+    // A two-row screen sees three lines: "line1" scrolls off and is committed
+    // as `scrollback_push` ahead of the live "line2" / "line3" body.
+    insta::assert_json_snapshot!(frame_with_scrollback(6, 2, b"line1\r\nline2\r\nline3"));
 }
 
 #[test]

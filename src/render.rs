@@ -9,7 +9,7 @@ use crate::hlcache::HlCache;
 use crate::protocol::{Attrs, Cell, CursorShape, Event};
 
 /// Default foreground/background the host applies to cells with no explicit
-/// color. The emulator carries no theme, so the daemon picks sensible defaults.
+/// color. The emulator carries no theme, so the bridge picks sensible defaults.
 const DEFAULT_FG: u32 = 0xd0d0d0;
 const DEFAULT_BG: u32 = 0x000000;
 
@@ -73,6 +73,9 @@ pub struct Snapshot {
     pub alt_screen: bool,
     pub title: Option<String>,
     pub bell: bool,
+    /// Lines that scrolled off the top of the primary screen since the previous
+    /// snapshot, oldest first. Emitted as `scrollback_push`.
+    pub committed: Vec<Vec<RowCell>>,
 }
 
 /// Run-length compress columns `(text, hl_id)` into wire cells, emitting the
@@ -199,6 +202,16 @@ impl Renderer {
         // After a grid_scroll the host's rows are prev shifted up by `k`, with
         // the bottom `k` rows left stale, so diff each row against that baseline.
         let mut hl_attrs = Vec::new();
+
+        // Lines that scrolled off the primary screen are committed verbatim
+        // (oldest first), interning highlights into the same pool as the live
+        // body so the host resolves their ids from the preceding hl_attr defs.
+        let committed: Vec<Vec<Cell>> = snapshot
+            .committed
+            .iter()
+            .map(|line| compress(&expand(line, &mut self.hlcache, &mut hl_attrs)))
+            .collect();
+
         let mut lines = Vec::new();
         for (row, line) in screen.lines.iter().enumerate() {
             let unchanged = !full
@@ -235,6 +248,11 @@ impl Renderer {
             self.defaults_sent = true;
         }
         events.append(&mut hl_attrs);
+        // Commit scrolled-off lines before the live body so the host advances
+        // its buffer first and the grid_line rows below resolve against it.
+        if !committed.is_empty() {
+            events.push(Event::ScrollbackPush { lines: committed });
+        }
         if full {
             events.push(Event::GridClear);
         }
@@ -302,6 +320,7 @@ mod tests {
             alt_screen: false,
             title: None,
             bell: false,
+            committed: Vec::new(),
         }
     }
 
@@ -567,6 +586,157 @@ mod tests {
                 .map(|row| row.iter().map(|c| c.text.clone()).collect())
                 .collect();
             assert_eq!(host, expected);
+        }
+    }
+
+    #[test]
+    fn committed_lines_emit_scrollback_push_before_the_live_body() {
+        let mut renderer = Renderer::default();
+        renderer.frame(&snapshot(lines(&["a"]), 1));
+        let mut snap = snapshot(lines(&["b"]), 1);
+        snap.committed = lines(&["x", "y"]); // two lines scrolled off, oldest first
+        let events = renderer.frame(&snap);
+
+        let push = events
+            .iter()
+            .find_map(|e| match e {
+                Event::ScrollbackPush { lines } => Some(lines.clone()),
+                _ => None,
+            })
+            .expect("scrollback_push emitted");
+        assert_eq!(push.len(), 2);
+        assert_eq!(push[0][0].text, "x");
+        assert_eq!(push[1][0].text, "y");
+
+        // Ordering: scrollback_push precedes the live grid_line body.
+        let push_pos = events
+            .iter()
+            .position(|e| matches!(e, Event::ScrollbackPush { .. }))
+            .unwrap();
+        let line_pos = events
+            .iter()
+            .position(|e| matches!(e, Event::GridLine { .. }))
+            .unwrap();
+        assert!(push_pos < line_pos);
+    }
+
+    #[test]
+    fn committed_highlight_is_defined_before_the_scrollback_push() {
+        let mut renderer = Renderer::default();
+        renderer.frame(&snapshot(lines(&["a"]), 1));
+        let red = Attrs {
+            fg: Some(0xff0000),
+            ..Attrs::default()
+        };
+        let mut snap = snapshot(lines(&["b"]), 1);
+        snap.committed = vec![vec![RowCell::narrow("z").with_attrs(red)]];
+        let events = renderer.frame(&snap);
+
+        let hl_pos = events
+            .iter()
+            .position(|e| matches!(e, Event::HlAttr { .. }))
+            .expect("hl_attr present");
+        let push_pos = events
+            .iter()
+            .position(|e| matches!(e, Event::ScrollbackPush { .. }))
+            .expect("scrollback_push present");
+        assert!(hl_pos < push_pos);
+    }
+
+    #[test]
+    fn no_committed_lines_emit_no_scrollback_push() {
+        let mut renderer = Renderer::default();
+        let events = renderer.frame(&snapshot(lines(&["a"]), 1));
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Event::ScrollbackPush { .. }))
+        );
+    }
+
+    /// A host with a growable buffer: committed scrollback above, a fixed
+    /// `rows`-line live region below. `scrollback_push` appends to committed;
+    /// grid_scroll/grid_clear/grid_line address only the live region.
+    struct HostBuf {
+        committed: Vec<String>,
+        live: Vec<String>,
+    }
+
+    fn cells_to_text(cells: &[Cell]) -> String {
+        let mut text = String::new();
+        for cell in cells {
+            for _ in 0..cell.span() {
+                text.push_str(&cell.text);
+            }
+        }
+        text
+    }
+
+    fn apply_growable(host: &mut HostBuf, events: &[Event]) {
+        for event in events {
+            match event {
+                Event::ScrollbackPush { lines } => {
+                    for cells in lines {
+                        host.committed.push(cells_to_text(cells));
+                    }
+                }
+                Event::GridScroll { rows: k, .. } => {
+                    let k = *k as usize;
+                    for r in 0..host.live.len() {
+                        if r + k < host.live.len() {
+                            host.live[r] = host.live[r + k].clone();
+                        }
+                        // bottom k rows keep their (now stale) content
+                    }
+                }
+                Event::GridClear => host.live.iter_mut().for_each(|l| l.clear()),
+                Event::GridLine { row, cells, .. } => {
+                    host.live[*row as usize] = cells_to_text(cells);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn host_reconstructs_committed_scrollback_plus_live_across_frames() {
+        // Model a terminal producing an ever-growing line sequence. Each frame
+        // appends some lines; the visible window is the last `rows`, and the
+        // lines that fell below the window are the committed delta. Reconstruct
+        // the buffer purely from the event stream and assert it equals the full
+        // transcript (committed ++ live) at every frame — including a frame that
+        // fires *both* a grid_scroll and a scrollback_push (add == 1), and a
+        // burst with no overlap (add == 4).
+        let rows = 3usize;
+        let mut produced: Vec<String> = Vec::new();
+        let mut top = 0usize;
+        let mut renderer = Renderer::default();
+        let mut host = HostBuf {
+            committed: Vec::new(),
+            live: vec![String::new(); rows],
+        };
+
+        for &add in &[3usize, 1, 1, 4, 1, 2] {
+            let prev_top = top;
+            for _ in 0..add {
+                let i = produced.len();
+                produced.push(format!("L{i}"));
+            }
+            top = produced.len().saturating_sub(rows);
+
+            let committed_delta: Vec<&str> =
+                produced[prev_top..top].iter().map(String::as_str).collect();
+            let visible: Vec<&str> = produced[top..].iter().map(String::as_str).collect();
+
+            let mut snap = snapshot(lines(&visible), 8);
+            snap.committed = lines(&committed_delta);
+            let events = renderer.frame(&snap);
+            apply_growable(&mut host, &events);
+
+            let expected_committed: Vec<String> = produced[..top].to_vec();
+            let expected_live: Vec<String> = visible.iter().map(|s| s.to_string()).collect();
+            assert_eq!(host.committed, expected_committed, "committed after +{add}");
+            assert_eq!(host.live, expected_live, "live after +{add}");
         }
     }
 

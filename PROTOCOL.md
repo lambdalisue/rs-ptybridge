@@ -8,10 +8,10 @@ and streams the resulting **screen state** as JSONL. The two parties are:
 
 - **Host** — the consumer (e.g. an editor plugin). Sends control messages
   (input, resize, signal) and renders the received screen state.
-- **Daemon** — `ptybridge`. Owns the PTY and the terminal grid; emits screen
+- **Bridge** — `ptybridge`. Owns the PTY and the terminal grid; emits screen
   diffs.
 
-> The screen grid state lives entirely on the Daemon side. JSONL carries the
+> The screen grid state lives entirely on the Bridge side. JSONL carries the
 > **emulation result**, never a transcript of ANSI operations. The Host holds
 > no terminal state machine.
 
@@ -51,20 +51,20 @@ are short because rendering messages are high-frequency.
 
 | Direction | Kinds |
 | --- | --- |
-| **Daemon → Host** (Event) | `hello` `grid_resize` `hl_attr` `default_colors` `grid_line` `grid_scroll` `grid_clear` `cursor` `mode` `title` `bell` `flush` `child_exit` `error` `pong` |
-| **Host → Daemon** (Control) | `input` `resize` `signal` `ping` `shutdown` |
+| **Bridge → Host** (Event) | `hello` `grid_resize` `hl_attr` `default_colors` `grid_line` `grid_scroll` `scrollback_push` `grid_clear` `cursor` `mode` `title` `bell` `flush` `child_exit` `error` `pong` |
+| **Host → Bridge** (Control) | `input` `resize` `signal` `ping` `shutdown` |
 
 A message that flows the wrong way is a protocol violation answered with
 `error{code:"direction"}`.
 
-## 4. Events (Daemon → Host)
+## 4. Events (Bridge → Host)
 
 ### `hello` — handshake
 ```json
-{"t":"hello","proto":"ptybridge","v":1,"cols":80,"rows":24,"features":["scroll","alt_screen","title"]}
+{"t":"hello","proto":"ptybridge","v":1,"cols":80,"rows":24,"features":["scroll","scrollback","alt_screen","title"]}
 ```
 Sent right after startup. `v` is the protocol version. `features` advertises
-the optional capabilities the Daemon emits.
+the optional capabilities the Bridge emits.
 
 ### `grid_resize` — grid size settled
 ```json
@@ -112,11 +112,11 @@ width computation**.
   inspecting content.
 - Therefore **Host column advance = total cell element count** (`repeat`
   included). This single rule places CJK and emoji correctly and keeps all ANSI
-  interpretation and width calculation inside the Daemon.
+  interpretation and width calculation inside the Bridge.
 
-**Width contract — the Daemon mirrors its emulator.** Cell width (1 or 2) and
+**Width contract — the Bridge mirrors its emulator.** Cell width (1 or 2) and
 grapheme grouping are whatever the underlying terminal emulator computed when it
-laid the cell into the grid; the Daemon performs no Unicode width logic of its
+laid the cell into the grid; the Bridge performs no Unicode width logic of its
 own. The guarantee to the Host is *internal consistency* — the emitted cells
 tile the row exactly — not agreement with any particular font's rendering.
 Consequences a Host should expect:
@@ -138,10 +138,51 @@ Consequences a Host should expect:
 ```
 Scrolls the `top..bot` / `left..right` rectangle by `rows` lines (positive =
 up), identical to Neovim `grid_scroll`, so the Host can shift buffer lines
-instead of repainting. A Daemon emits this only when it advertised `scroll` in
-`hello`; a Daemon that does not advertise `scroll` re-sends the affected rows as
-`grid_line` instead. A Host connected to a `scroll`-advertising Daemon **must**
+instead of repainting. A Bridge emits this only when it advertised `scroll` in
+`hello`; a Bridge that does not advertise `scroll` re-sends the affected rows as
+`grid_line` instead. A Host connected to a `scroll`-advertising Bridge **must**
 apply `grid_scroll` (§8).
+
+### `scrollback_push` — commit lines that scrolled off the top
+
+```json
+{"t":"scrollback_push","lines":[[["o",7],["l",7,2],["d"]],[["n","ext"]]]}
+```
+
+Carries the lines that have just scrolled off the **top of the primary
+screen**, oldest first, so the Host can append them to its own scrollback. Each
+element of `lines` is a `cells` array with the exact same shape and semantics as
+`grid_line.cells` (§`grid_line`): one cell = one grapheme, wide characters
+followed by an empty spacer, runs compressed with `repeat`, highlight ids
+referencing prior `hl_attr` definitions.
+
+A Bridge emits this only when it advertised `scrollback` in `hello`. It is the
+**sole** source of committed scrollback content — a Host **must not** derive
+scrollback from `grid_scroll` (which only shifts the live region). This matters
+for bursts: a program that prints hundreds of lines within one frame scrolls
+them past the visible grid, so they never appear as `grid_line`; `scrollback_push`
+delivers their content regardless.
+
+The Host's model is two disjoint regions:
+
+```
+buffer = [committed scrollback] ++ [live region: `rows` lines]
+```
+
+- `scrollback_push` inserts its `lines` immediately **above** the live region
+  (committed scrollback grows; never rewritten).
+- `grid_line` / `grid_scroll` / `grid_clear` address only the live region, which
+  always holds the current visible grid. With this split the Host scrolls
+  through history **locally** (e.g. a normal editor buffer) with no round-trip.
+
+Only the **primary** screen has scrollback. While `alt_screen` is active the
+Bridge emits no `scrollback_push`; the live region is updated in place and the
+committed scrollback is left untouched.
+
+The committed content is a frozen transcript: lines are **not** reflowed when
+the grid is later resized (only the live region reflows). Capture is
+best-effort and bounded by the Bridge's `--scrollback` capacity; a single
+pathological burst larger than that capacity may drop its oldest lines.
 
 ### `grid_clear` — clear the whole grid
 ```json
@@ -159,9 +200,11 @@ cursor or ignore this.
 ```json
 {"t":"mode","alt_screen":true}
 ```
-Signals entering/leaving the alternate screen. The Host uses it to decide its
-scrollback policy (append vs overwrite); scrollback is the Host's
-responsibility.
+Signals entering/leaving the alternate screen. While `alt_screen` is active the
+live region is a scratch surface that overwrites in place and produces no
+`scrollback_push` — the Host keeps its committed scrollback (§`scrollback_push`)
+untouched until the primary screen returns. The Host stores the committed
+scrollback; the Bridge only transmits each line once, as it scrolls off.
 
 ### `title` / `bell`
 ```json
@@ -192,7 +235,7 @@ it; `code: -1` is a sentinel for a failed `wait`.
 {"t":"pong","id":42}
 ```
 
-## 5. Controls (Host → Daemon)
+## 5. Controls (Host → Bridge)
 
 ### `input` — terminal input
 ```json
@@ -206,7 +249,7 @@ encoded keys into terminal escape sequences). Use `enc:"base64"` for binary.
 ```json
 {"t":"resize","cols":120,"rows":40}
 ```
-Notifies the Daemon of a window size change. The Daemon resizes the PTY
+Notifies the Bridge of a window size change. The Bridge resizes the PTY
 (`TIOCSWINSZ`), resizes the emulator, and replies with `grid_resize`. The child
 receives `SIGWINCH`. **The Host is the authority on size.**
 
@@ -231,12 +274,15 @@ are emitted in this order:
 
 1. `grid_resize` — only on a size change
 2. `default_colors` — once, on the first frame
-3. `hl_attr*` — define any **new** ids referenced below
-4. `grid_clear` — on a full repaint
-5. `grid_scroll*` / `grid_line*` — the body
-6. `cursor`
-7. `mode` / `title` / `bell` — whichever occurred
-8. `flush`
+3. `hl_attr*` — define any **new** ids referenced below (by both
+   `scrollback_push` and the live-region body)
+4. `scrollback_push` — lines committed since the previous frame, applied before
+   the live region so its rows resolve against the advanced buffer
+5. `grid_clear` — on a full repaint
+6. `grid_scroll*` / `grid_line*` — the live-region body
+7. `cursor`
+8. `mode` / `title` / `bell` — whichever occurred
+9. `flush`
 
 `hl_attr` defines only ids not previously sent; established ids are never
 re-sent.
@@ -245,17 +291,17 @@ re-sent.
 
 ```
 (start: stdin/stdout connected)
-  Daemon → hello{cols,rows,features}
+  Bridge → hello{cols,rows,features}
   Host   → resize{cols,rows}            (real window size)
-  Daemon spawns child on the PTY (TIOCSWINSZ)
+  Bridge spawns child on the PTY (TIOCSWINSZ)
   loop:
     child → PTY output (ANSI bytes)
-    Daemon → hl_attr* / grid_line* / cursor / flush
+    Bridge → hl_attr* / grid_line* / cursor / flush
     Host   → input{data}                (user input)
     Host   → resize{cols,rows}          (on window change)
-    Daemon → grid_resize + repaint frame
+    Bridge → grid_resize + repaint frame
   child exits
-  Daemon → child_exit{code}
+  Bridge → child_exit{code}
   (process disconnects and exits)
 ```
 
@@ -263,30 +309,36 @@ re-sent.
 
 ```
 Host   → resize{cols:120, rows:40}
-Daemon → PTY.resize(120,40)  → child SIGWINCH
-Daemon → emulator.resize(120,40); mark full repaint
-Daemon → grid_resize{120,40}
+Bridge → PTY.resize(120,40)  → child SIGWINCH
+Bridge → emulator.resize(120,40); mark full repaint
+Bridge → grid_resize{120,40}
 child  → repaint output → ANSI bytes
-Daemon → hl_attr* / grid_line* / cursor / flush
+Bridge → hl_attr* / grid_line* / cursor / flush
 ```
 
 ## 8. Versioning and negotiation
 
 - `hello.proto = "ptybridge"`, `hello.v = <int>` (independent of the crate
   version). A Host that cannot speak the version sends `shutdown`.
-- `hello.features` lists the optional capabilities the Daemon **emits**
-  (`scroll`, `alt_screen`, `title`, future `sixel`, …). A Host **must** handle
-  every advertised feature — e.g. apply `grid_scroll` when `scroll` is present.
-  v1 has no Host→Daemon capability exchange, so a Host cannot opt out of a
-  feature per connection; per-Host suppression is a future extension.
+- `hello.features` lists the optional capabilities the Bridge **emits**
+  (`scroll`, `scrollback`, `alt_screen`, `title`, future `sixel`, …). A Host
+  **must** handle every advertised feature — e.g. apply `grid_scroll` when
+  `scroll` is present, and append `scrollback_push` lines when `scrollback` is
+  present. The `scroll` feature (emits `grid_scroll`) and the `scrollback`
+  feature (emits `scrollback_push`) are independent: `scroll` optimizes
+  live-region repaints, `scrollback` preserves lines that leave the grid. v1 has
+  no Host→Bridge capability exchange, so a Host cannot opt out of a feature per
+  connection; per-Host suppression is a future extension.
+- Adding `scrollback_push` and the `scrollback` feature is **additive** (a new
+  message kind, a new feature flag); it does not bump `hello.v`.
 
 ## 9. Error handling
 
 | Event | Behavior |
 | --- | --- |
 | Malformed JSON line | reply `error{code:"parse"}`, drop the line |
-| Control line exceeding the daemon's length cap | reply `error{code:"parse"}`, drop the line, resynchronize at the next newline |
-| Malformed MessagePack value, or one exceeding the daemon's per-message byte cap | reply `error{code:"parse"}`, then end the stream — binary framing cannot resynchronize |
+| Control line exceeding the Bridge's length cap | reply `error{code:"parse"}`, drop the line, resynchronize at the next newline |
+| Malformed MessagePack value, or one exceeding the Bridge's per-message byte cap | reply `error{code:"parse"}`, then end the stream — binary framing cannot resynchronize |
 | Unknown `t` | log and ignore (forward compatible) |
 | Wrong-direction message | `error{code:"direction"}` |
 | Known control with bad fields, encoding, or signal name | `error{code:"bad_message"}` |

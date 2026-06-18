@@ -25,6 +25,16 @@ pub struct Cli {
     #[arg(long, default_value_t = 60)]
     pub max_fps: u16,
 
+    /// Lines of scrollback captured as they leave the top of the primary screen
+    /// (emitted as `scrollback_push`). `0` disables scrollback entirely.
+    ///
+    /// This bounds the lines captured per PTY read (8 KiB, so at most ~8192
+    /// newline-only lines); the default comfortably exceeds one read, so a
+    /// single read never overflows it. The Host is the durable store — this is
+    /// only the transient capture window.
+    #[arg(long, default_value_t = 10000)]
+    pub scrollback: usize,
+
     /// Write debug logs to this path instead of stderr.
     #[arg(long)]
     pub log: Option<String>,

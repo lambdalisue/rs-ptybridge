@@ -9,8 +9,9 @@ use std::rc::Rc;
 
 use alacritty_terminal::Term;
 use alacritty_terminal::event::{Event as AlacEvent, EventListener};
-use alacritty_terminal::grid::Dimensions;
+use alacritty_terminal::grid::{Dimensions, Row};
 use alacritty_terminal::index::{Column, Line};
+use alacritty_terminal::term::cell::Cell as VtCell;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::{Config, TermMode};
 use alacritty_terminal::vte::ansi::{
@@ -21,8 +22,9 @@ use crate::palette;
 use crate::protocol::{Attrs, CursorShape};
 use crate::render::{Cursor, RowCell, Screen, Snapshot};
 
-/// Grid dimensions handed to the emulator. Scrollback is disabled: the visible
-/// screen is the whole buffer, which is all the protocol streams.
+/// Grid dimensions handed to the emulator: the visible screen only. The
+/// scrollback capacity is set separately via [`Config::scrolling_history`]; the
+/// emulator's history is drained into the committed buffer after each `feed`.
 #[derive(Clone, Copy)]
 struct GridSize {
     cols: usize,
@@ -76,17 +78,26 @@ pub struct Emulator {
     term: Term<Recorder>,
     parser: Processor,
     recorder: Recorder,
+    /// Lines that scrolled off the top of the primary screen since the last
+    /// snapshot, oldest first. Drained into [`Snapshot::committed`].
+    committed: Vec<Vec<RowCell>>,
 }
 
 impl Emulator {
-    /// Create an emulator with an initial grid size.
+    /// Create an emulator with an initial grid size and no scrollback.
     pub fn new(cols: u16, rows: u16) -> Self {
+        Self::with_scrollback(cols, rows, 0)
+    }
+
+    /// Create an emulator that captures up to `scrollback` lines per `feed` as
+    /// they scroll off the top of the primary screen (0 disables capture).
+    pub fn with_scrollback(cols: u16, rows: u16, scrollback: usize) -> Self {
         let size = GridSize {
             cols: cols as usize,
             rows: rows as usize,
         };
         let config = Config {
-            scrolling_history: 0,
+            scrolling_history: scrollback,
             ..Config::default()
         };
         let recorder = Recorder::default();
@@ -94,12 +105,36 @@ impl Emulator {
             term: Term::new(config, &size, recorder.clone()),
             parser: Processor::new(),
             recorder,
+            committed: Vec::new(),
         }
     }
 
     /// Feed a chunk of PTY output into the emulator.
+    ///
+    /// Any lines that scroll off the top of the primary screen during this
+    /// chunk are captured into the committed buffer, then the emulator's history
+    /// is cleared. Draining per chunk keeps the committed count exact: the
+    /// emulator's `history_size` caps at the configured capacity, so a per-frame
+    /// delta would plateau and silently stop growing once full — the Host, not
+    /// the Bridge, is the durable scrollback store.
     pub fn feed(&mut self, bytes: &[u8]) {
         self.parser.advance(&mut self.term, bytes);
+
+        let history = self.term.grid().history_size();
+        if history == 0 {
+            return;
+        }
+        let grid = self.term.grid();
+        let cols = grid.columns();
+        // History holds the most recently committed line at `Line(-1)`; emit
+        // oldest first so the Host appends in chronological order.
+        let mut newly = Vec::with_capacity(history);
+        for offset in (1..=history).rev() {
+            let row = &grid[Line(-(offset as i32))];
+            newly.push(row_to_cells(row, cols));
+        }
+        self.committed.append(&mut newly);
+        self.term.grid_mut().clear_history();
     }
 
     /// Resize the grid; the child observes this via `SIGWINCH` separately.
@@ -129,35 +164,7 @@ impl Emulator {
 
         let mut lines = Vec::with_capacity(rows);
         for line in 0..rows {
-            let row = &grid[Line(line as i32)];
-            let mut cells = Vec::with_capacity(cols);
-            for col in 0..cols {
-                let cell = &row[Column(col)];
-                // The trailing half of a wide char is regenerated from the wide
-                // cell's width, so drop it. A leading wide-char spacer is a real
-                // blank column (a wide char wrapped to the next line), so keep it.
-                if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
-                    continue;
-                }
-
-                let mut text = String::new();
-                text.push(cell.c);
-                if let Some(zerowidth) = cell.zerowidth() {
-                    text.extend(zerowidth.iter());
-                }
-
-                let width = if cell.flags.contains(Flags::WIDE_CHAR) {
-                    2
-                } else {
-                    1
-                };
-                cells.push(RowCell {
-                    text,
-                    attrs: cell_attrs(cell),
-                    width,
-                });
-            }
-            lines.push(cells);
+            lines.push(row_to_cells(&grid[Line(line as i32)], cols));
         }
 
         let cursor = Cursor {
@@ -182,8 +189,41 @@ impl Emulator {
             alt_screen: mode.contains(TermMode::ALT_SCREEN),
             title,
             bell,
+            committed: std::mem::take(&mut self.committed),
         }
     }
+}
+
+/// Convert one emulator grid row into neutral [`RowCell`]s, dropping the
+/// trailing spacer of a wide character (regenerated from the wide cell's width)
+/// while keeping a leading wide-char spacer (a real blank column left when a
+/// wide char wrapped to the next line).
+fn row_to_cells(row: &Row<VtCell>, cols: usize) -> Vec<RowCell> {
+    let mut cells = Vec::with_capacity(cols);
+    for col in 0..cols {
+        let cell = &row[Column(col)];
+        if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+            continue;
+        }
+
+        let mut text = String::new();
+        text.push(cell.c);
+        if let Some(zerowidth) = cell.zerowidth() {
+            text.extend(zerowidth.iter());
+        }
+
+        let width = if cell.flags.contains(Flags::WIDE_CHAR) {
+            2
+        } else {
+            1
+        };
+        cells.push(RowCell {
+            text,
+            attrs: cell_attrs(cell),
+            width,
+        });
+    }
+    cells
 }
 
 /// Map an emulator color into the neutral palette color, so the palette never
@@ -317,6 +357,72 @@ mod tests {
             let span: u32 = line.iter().map(|c| c.width as u32).sum();
             assert_eq!(span, screen.cols as u32, "row {row} spans {span}, not cols");
         }
+    }
+
+    fn committed_texts(snapshot: &Snapshot) -> Vec<String> {
+        snapshot
+            .committed
+            .iter()
+            .map(|line| {
+                line.iter()
+                    .map(|c| c.text.as_str())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn lines_scrolled_off_the_top_are_committed_oldest_first() {
+        let mut emu = Emulator::with_scrollback(4, 2, 100);
+        emu.feed(b"1\r\n2\r\n3\r\n4");
+        let snap = emu.snapshot();
+        // The two-row screen keeps the last rows; the earlier lines committed.
+        assert_eq!(committed_texts(&snap), vec!["1", "2"]);
+        assert_eq!(row_texts(&snap.screen), vec!["3   ", "4   "]);
+    }
+
+    #[test]
+    fn without_scrollback_no_lines_are_committed() {
+        let mut emu = Emulator::new(4, 2);
+        emu.feed(b"1\r\n2\r\n3\r\n4");
+        assert!(emu.snapshot().committed.is_empty());
+    }
+
+    #[test]
+    fn committed_lines_drain_on_snapshot() {
+        let mut emu = Emulator::with_scrollback(4, 2, 100);
+        emu.feed(b"1\r\n2\r\n3\r\n4");
+        assert_eq!(emu.snapshot().committed.len(), 2);
+        // Draining is one-shot: a later snapshot without new scrolling is empty.
+        assert!(emu.snapshot().committed.is_empty());
+    }
+
+    #[test]
+    fn scrolling_continues_to_commit_past_the_history_capacity() {
+        // Capacity is the per-chunk capture window, not a session cap: history is
+        // drained and cleared after every feed, so commits never plateau.
+        let mut emu = Emulator::with_scrollback(4, 2, 3);
+        let mut all = Vec::new();
+        for n in 0..10 {
+            emu.feed(format!("{n}\r\n").as_bytes());
+            all.extend(committed_texts(&emu.snapshot()));
+        }
+        // Every line that scrolled out of the 2-row screen was committed once.
+        assert_eq!(all, vec!["0", "1", "2", "3", "4", "5", "6", "7", "8"]);
+    }
+
+    #[test]
+    fn alt_screen_scrolling_commits_nothing() {
+        // The alternate screen has no scrollback, so scrolling there never
+        // commits lines — committed stays empty while `alt_screen` is active.
+        let mut emu = Emulator::with_scrollback(4, 2, 100);
+        emu.feed(b"\x1b[?1049h"); // enter the alternate screen
+        emu.feed(b"1\r\n2\r\n3\r\n4");
+        let snap = emu.snapshot();
+        assert!(snap.alt_screen);
+        assert!(snap.committed.is_empty());
     }
 
     #[test]

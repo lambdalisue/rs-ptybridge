@@ -1,0 +1,107 @@
+---
+source: tests/snapshot.rs
+expression: "frame_with_scrollback(6, 2, b\"line1\\r\\nline2\\r\\nline3\")"
+---
+[
+  {
+    "t": "default_colors",
+    "fg": 13684944,
+    "bg": 0,
+    "sp": 13684944
+  },
+  {
+    "t": "scrollback_push",
+    "lines": [
+      [
+        [
+          "l",
+          0
+        ],
+        [
+          "i"
+        ],
+        [
+          "n"
+        ],
+        [
+          "e"
+        ],
+        [
+          "1"
+        ],
+        [
+          " "
+        ]
+      ]
+    ]
+  },
+  {
+    "t": "grid_clear"
+  },
+  {
+    "t": "grid_line",
+    "row": 0,
+    "col": 0,
+    "cells": [
+      [
+        "l",
+        0
+      ],
+      [
+        "i"
+      ],
+      [
+        "n"
+      ],
+      [
+        "e"
+      ],
+      [
+        "2"
+      ],
+      [
+        " "
+      ]
+    ]
+  },
+  {
+    "t": "grid_line",
+    "row": 1,
+    "col": 0,
+    "cells": [
+      [
+        "l",
+        0
+      ],
+      [
+        "i"
+      ],
+      [
+        "n"
+      ],
+      [
+        "e"
+      ],
+      [
+        "3"
+      ],
+      [
+        " "
+      ]
+    ]
+  },
+  {
+    "t": "cursor",
+    "row": 1,
+    "col": 5,
+    "visible": true,
+    "shape": "block"
+  },
+  {
+    "t": "mode",
+    "alt_screen": false
+  },
+  {
+    "t": "flush"
+  }
+]

@@ -49,6 +49,8 @@ pub struct SessionConfig<'a> {
     pub cols: u16,
     pub rows: u16,
     pub max_fps: u16,
+    /// Scrollback lines captured per chunk (0 disables `scrollback_push`).
+    pub scrollback: usize,
     pub format: Format,
 }
 
@@ -80,7 +82,6 @@ fn session_loop(
     // oversized --cols/--rows cannot request a multi-gigacell grid.
     let cols = config.cols.clamp(1, MAX_COLS);
     let rows = config.rows.clamp(1, MAX_ROWS);
-    let max_fps = config.max_fps;
     let (mut pty, pty_rx) = match Pty::spawn(config.command, cols, rows) {
         Ok(pty) => pty,
         Err(err) => {
@@ -109,7 +110,7 @@ fn session_loop(
     spawn_output_forwarder(pty_rx, tx.clone());
     drop(tx); // the loop exits once both source threads drop their senders
 
-    let outcome = drive(&rx, &mut pty, &mut writer, cols, rows, max_fps, format);
+    let outcome = drive(config, &rx, &mut pty, &mut writer, cols, rows);
 
     // Reap the child unconditionally — even if the loop bailed on an I/O error
     // (e.g. the host disconnected) — so it cannot linger as a zombie. The
@@ -135,22 +136,25 @@ fn session_loop(
 /// control until the session ends. Returns `Err` on an I/O failure (the caller
 /// still reaps the child).
 fn drive<W: Write>(
+    config: &SessionConfig,
     rx: &Receiver<Incoming>,
     pty: &mut Pty,
     writer: &mut W,
     cols: u16,
     rows: u16,
-    max_fps: u16,
-    format: Format,
 ) -> anyhow::Result<()> {
-    let mut emulator = Emulator::new(cols, rows);
+    let format = config.format;
+    let mut emulator = Emulator::with_scrollback(cols, rows, config.scrollback);
     let mut renderer = Renderer::default();
-    let frame_interval = Duration::from_secs_f64(1.0 / max_fps.max(1) as f64);
+    let frame_interval = Duration::from_secs_f64(1.0 / config.max_fps.max(1) as f64);
 
-    let features = ["scroll", "alt_screen", "title"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    // Advertise `scrollback` only when a scrollback buffer is actually
+    // maintained, i.e. the bridge will emit `scrollback_push`.
+    let mut feature_names = vec!["scroll", "alt_screen", "title"];
+    if config.scrollback > 0 {
+        feature_names.push("scrollback");
+    }
+    let features = feature_names.iter().map(|s| s.to_string()).collect();
     write_event(writer, &Event::hello(cols, rows, features), format)?;
     // Paint an initial baseline so the host has a synchronized starting grid and
     // a later resize diffs against it (emitting grid_resize rather than a silent
