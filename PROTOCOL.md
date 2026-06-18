@@ -17,18 +17,26 @@ and streams the resulting **screen state** as JSONL. The two parties are:
 
 The vocabulary mirrors Neovim's external `ext_linegrid` UI protocol.
 
-## 1. Framing
+## 1. Framing and encoding
 
-- **One line = one JSON object**, separated by `\n`. JSON encoding escapes any
-  newline inside string values, so `\n` never appears mid-object.
-- Events are written to **stdout** and controls are read from **stdin** — an
-  ordered, reliable stream in each direction. **Direction is determined by
-  message kind** (§3).
-- Text is UTF-8. Binary input uses a base64 field where noted (`input`).
+The same messages are carried in one of two encodings, selected at startup
+(`--format`, default `jsonl`):
+
+- **JSONL** (default): one JSON object per line, separated by `\n`. JSON
+  escapes any newline inside string values, so `\n` never appears mid-object.
+- **MessagePack** (`--format msgpack`): each message is one self-delimiting
+  MessagePack value, written back-to-back with no separator. More compact and
+  cheaper to parse for the high-frequency `grid_line` traffic.
+
+Both encodings carry the identical message shapes (§4, §5) — a map keyed by `t`,
+with the same cell-array form. Events are written to **stdout** and controls
+are read from **stdin**, an ordered, reliable stream in each direction.
+**Direction is determined by message kind** (§3). Text is UTF-8; binary input
+uses a base64 field where noted (`input`).
 
 ## 2. Envelope and compatibility
 
-Every message is a JSON object with a mandatory string discriminator `t`. Keys
+Every message is an object with a mandatory string discriminator `t`. Keys
 are short because rendering messages are high-frequency.
 
 ```json
@@ -278,6 +286,7 @@ Daemon → hl_attr* / grid_line* / cursor / flush
 | --- | --- |
 | Malformed JSON line | reply `error{code:"parse"}`, drop the line |
 | Control line exceeding the daemon's length cap | reply `error{code:"parse"}`, drop the line, resynchronize at the next newline |
+| Malformed MessagePack value, or one exceeding the daemon's per-message byte cap | reply `error{code:"parse"}`, then end the stream — binary framing cannot resynchronize |
 | Unknown `t` | log and ignore (forward compatible) |
 | Wrong-direction message | `error{code:"direction"}` |
 | Known control with bad fields, encoding, or signal name | `error{code:"bad_message"}` |

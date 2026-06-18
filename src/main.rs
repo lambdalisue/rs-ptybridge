@@ -17,6 +17,7 @@ fn main() -> anyhow::Result<()> {
         cols: cli.cols,
         rows: cli.rows,
         max_fps: cli.max_fps,
+        format: cli.format,
     };
 
     engine::run_session(

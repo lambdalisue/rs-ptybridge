@@ -2,11 +2,17 @@
 
 use clap::Parser;
 
-/// Allocate a PTY, emulate the terminal, and stream screen state as JSONL on
-/// stdout, reading control messages as JSONL on stdin.
+use crate::transport::codec::Format;
+
+/// Allocate a PTY, emulate the terminal, and stream screen state on stdout,
+/// reading control messages on stdin.
 #[derive(Debug, Parser)]
 #[command(name = "ptybridge", version = env!("PTYBRIDGE_VERSION"), about, long_about = None)]
 pub struct Cli {
+    /// Wire encoding: `jsonl` (one JSON object per line) or `msgpack`.
+    #[arg(long, value_enum, default_value_t = Format::Jsonl)]
+    pub format: Format,
+
     /// Initial grid width in columns.
     #[arg(long, default_value_t = 80)]
     pub cols: u16,

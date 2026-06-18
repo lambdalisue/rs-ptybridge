@@ -49,8 +49,8 @@ jobs:
         with:
           deno-version: v2.x
       - name: Format
-        run: deno fmt --check examples/passthrough.ts
+        run: deno fmt --check
       - name: Lint
-        run: deno lint examples/passthrough.ts
+        run: deno lint
       - name: Type check
-        run: deno check examples/passthrough.ts
+        run: deno check examples/passthrough.ts examples/msgpack_render.ts

@@ -1,0 +1,11 @@
+{
+  "imports": {
+    "@msgpack/msgpack": "npm:@msgpack/msgpack@3"
+  },
+  "fmt": {
+    "include": ["examples/"]
+  },
+  "lint": {
+    "include": ["examples/"]
+  }
+}

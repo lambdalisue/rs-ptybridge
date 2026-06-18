@@ -2,8 +2,8 @@
 //!
 //! PTY output and host control messages are merged onto one channel so a single
 //! loop can react to both while coalescing output bursts into one frame per
-//! `max_fps` window. The engine reads control lines from a [`BufRead`] (stdin)
-//! and writes events to a [`Write`] (stdout).
+//! `max_fps` window. The engine reads control from a [`BufRead`] (stdin) and
+//! writes events to a [`Write`] (stdout), in the session's wire [`Format`].
 
 use std::io::{self, BufRead, Write};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
@@ -15,7 +15,9 @@ use crate::protocol::{Control, Event};
 use crate::pty::{Exit, Pty};
 use crate::render::Renderer;
 use crate::term::Emulator;
-use crate::transport::codec::{Decoded, decode_control, write_event};
+use crate::transport::codec::{
+    Decoded, Format, MsgRead, classify, decode_control, read_msgpack, write_event,
+};
 
 /// Bound on in-flight messages, applying backpressure to the PTY (and thus the
 /// child) when the host cannot keep up, instead of buffering without limit.
@@ -47,6 +49,7 @@ pub struct SessionConfig<'a> {
     pub cols: u16,
     pub rows: u16,
     pub max_fps: u16,
+    pub format: Format,
 }
 
 /// Run one session: read control lines from `reader`, write events to `writer`.
@@ -69,8 +72,9 @@ fn session_loop(
     reader: Box<dyn BufRead + Send>,
     mut writer: Box<dyn Write + Send>,
 ) -> anyhow::Result<()> {
+    let format = config.format;
     let (tx, rx) = mpsc::sync_channel::<Incoming>(CHANNEL_CAPACITY);
-    spawn_control_reader(reader, tx.clone());
+    spawn_control_reader(reader, tx.clone(), format);
 
     // Clamp the initial grid to the same bounds the resize path enforces, so an
     // oversized --cols/--rows cannot request a multi-gigacell grid.
@@ -87,6 +91,7 @@ fn session_loop(
                     code: "spawn".to_string(),
                     message: err.to_string(),
                 },
+                format,
             )?;
             write_event(
                 &mut writer,
@@ -94,6 +99,7 @@ fn session_loop(
                     code: None,
                     signal: None,
                 },
+                format,
             )?;
             writer.flush()?;
             return Ok(());
@@ -103,7 +109,7 @@ fn session_loop(
     spawn_output_forwarder(pty_rx, tx.clone());
     drop(tx); // the loop exits once both source threads drop their senders
 
-    let outcome = drive(&rx, &mut pty, &mut writer, cols, rows, max_fps);
+    let outcome = drive(&rx, &mut pty, &mut writer, cols, rows, max_fps, format);
 
     // Reap the child unconditionally — even if the loop bailed on an I/O error
     // (e.g. the host disconnected) — so it cannot linger as a zombie. The
@@ -119,6 +125,7 @@ fn session_loop(
             code: exit.code,
             signal: exit.signal,
         },
+        format,
     );
     let _ = writer.flush();
     outcome
@@ -134,6 +141,7 @@ fn drive<W: Write>(
     cols: u16,
     rows: u16,
     max_fps: u16,
+    format: Format,
 ) -> anyhow::Result<()> {
     let mut emulator = Emulator::new(cols, rows);
     let mut renderer = Renderer::default();
@@ -143,19 +151,19 @@ fn drive<W: Write>(
         .iter()
         .map(|s| s.to_string())
         .collect();
-    write_event(writer, &Event::hello(cols, rows, features))?;
+    write_event(writer, &Event::hello(cols, rows, features), format)?;
     // Paint an initial baseline so the host has a synchronized starting grid and
     // a later resize diffs against it (emitting grid_resize rather than a silent
     // first redraw).
     for event in renderer.frame(&emulator.snapshot()) {
-        write_event(writer, &event)?;
+        write_event(writer, &event, format)?;
     }
     writer.flush()?;
 
     while let Ok(msg) = rx.recv() {
         let mut dirty = false;
         let mut stop = matches!(
-            handle(msg, &mut emulator, pty, writer, &mut dirty)?,
+            handle(msg, &mut emulator, pty, writer, &mut dirty, format)?,
             Flow::Stop
         );
 
@@ -171,7 +179,7 @@ fn drive<W: Write>(
                 match rx.recv_timeout(remaining) {
                     Ok(more) => {
                         if matches!(
-                            handle(more, &mut emulator, pty, writer, &mut dirty)?,
+                            handle(more, &mut emulator, pty, writer, &mut dirty, format)?,
                             Flow::Stop
                         ) {
                             stop = true;
@@ -189,7 +197,7 @@ fn drive<W: Write>(
         }
         if dirty {
             for event in renderer.frame(&emulator.snapshot()) {
-                write_event(writer, &event)?;
+                write_event(writer, &event, format)?;
             }
             writer.flush()?;
         }
@@ -207,6 +215,7 @@ fn handle<W: Write>(
     pty: &mut Pty,
     out: &mut W,
     dirty: &mut bool,
+    format: Format,
 ) -> anyhow::Result<Flow> {
     match msg {
         Incoming::Output(chunk) => {
@@ -216,7 +225,7 @@ fn handle<W: Write>(
         // Child output ended or the host hung up: end the session.
         Incoming::OutputEnd | Incoming::ControlEnd => return Ok(Flow::Stop),
         Incoming::ControlError(event) => {
-            write_event(out, &event)?;
+            write_event(out, &event, format)?;
             out.flush()?;
         }
         Incoming::Control(Control::Input { enc, data }) => {
@@ -229,6 +238,7 @@ fn handle<W: Write>(
                             code: "bad_message".to_string(),
                             message,
                         },
+                        format,
                     )?;
                     out.flush()?;
                 }
@@ -250,13 +260,14 @@ fn handle<W: Write>(
                         code: "bad_message".to_string(),
                         message: format!("unknown signal: {name}"),
                     },
+                    format,
                 )?;
                 out.flush()?;
             }
         },
         Incoming::Control(Control::Ping { id }) => {
             // Answer keepalive immediately; pong is not part of a frame.
-            write_event(out, &Event::Pong { id })?;
+            write_event(out, &Event::Pong { id }, format)?;
             out.flush()?;
         }
         Incoming::Control(Control::Shutdown) => return Ok(Flow::Stop),
@@ -283,56 +294,99 @@ fn spawn_output_forwarder(pty_rx: Receiver<Vec<u8>>, tx: SyncSender<Incoming>) {
 /// to the next newline rather than ending the session.
 const MAX_CONTROL_LINE: usize = 1 << 20; // 1 MiB
 
-/// Read control JSONL lines from `reader` onto the engine channel. Detached and
-/// never joined: it blocks on the reader and exits when the engine drops the
-/// channel.
-fn spawn_control_reader(mut reader: Box<dyn BufRead + Send>, tx: SyncSender<Incoming>) {
+/// Read control messages from `reader` onto the engine channel in `format`.
+/// Detached and never joined: it blocks on the reader and exits when the engine
+/// drops the channel.
+fn spawn_control_reader(
+    mut reader: Box<dyn BufRead + Send>,
+    tx: SyncSender<Incoming>,
+    format: Format,
+) {
     thread::spawn(move || {
-        loop {
-            let mut buf = Vec::new();
-            match read_capped_line(&mut reader, &mut buf) {
-                Ok(0) => break, // EOF
-                Ok(_) => {}
-                Err(_) => break,
-            }
-
-            // The cap was hit without reaching a newline: the line is over-long.
-            // Report it and discard the remainder up to the next newline so the
-            // following lines still parse.
-            if buf.len() > MAX_CONTROL_LINE && buf.last() != Some(&b'\n') {
-                let event = Event::Error {
-                    code: "parse".to_string(),
-                    message: "control line exceeds maximum length".to_string(),
-                };
-                if tx.send(Incoming::ControlError(event)).is_err() {
-                    return;
-                }
-                if skip_to_newline(&mut reader).unwrap_or(false) {
-                    continue;
-                }
-                break; // EOF or error while resynchronizing
-            }
-
-            let line = String::from_utf8_lossy(&buf);
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            let msg = match decode_control(line) {
-                Decoded::Control(control) => Incoming::Control(control),
-                Decoded::Error(error) => Incoming::ControlError(error),
-                // Unknown type: log and drop (forward compatibility).
-                Decoded::Ignore => {
-                    tracing::debug!(line = %line, "ignoring unknown control message");
-                    continue;
-                }
-            };
-            if tx.send(msg).is_err() {
-                return;
-            }
+        match format {
+            Format::Jsonl => read_jsonl_controls(&mut reader, &tx),
+            Format::Msgpack => read_msgpack_controls(&mut reader, &tx),
         }
         let _ = tx.send(Incoming::ControlEnd);
     });
+}
+
+/// JSONL: one `\n`-delimited message per line, capped in length and
+/// resynchronized at the next newline when a line is over-long.
+fn read_jsonl_controls(reader: &mut dyn BufRead, tx: &SyncSender<Incoming>) {
+    loop {
+        let mut buf = Vec::new();
+        match read_capped_line(reader, &mut buf) {
+            Ok(0) => return, // EOF
+            Ok(_) => {}
+            Err(_) => return,
+        }
+
+        // The cap was hit without reaching a newline: the line is over-long.
+        // Report it and discard the remainder up to the next newline so the
+        // following lines still parse.
+        if buf.len() > MAX_CONTROL_LINE && buf.last() != Some(&b'\n') {
+            let event = Event::Error {
+                code: "parse".to_string(),
+                message: "control line exceeds maximum length".to_string(),
+            };
+            if tx.send(Incoming::ControlError(event)).is_err() {
+                return;
+            }
+            if skip_to_newline(reader).unwrap_or(false) {
+                continue;
+            }
+            return; // EOF or error while resynchronizing
+        }
+
+        let line = String::from_utf8_lossy(&buf);
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let msg = match decode_control(line) {
+            Decoded::Control(control) => Incoming::Control(control),
+            Decoded::Error(error) => Incoming::ControlError(error),
+            // Unknown type: log and drop (forward compatibility).
+            Decoded::Ignore => {
+                tracing::debug!(line = %line, "ignoring unknown control message");
+                continue;
+            }
+        };
+        if tx.send(msg).is_err() {
+            return;
+        }
+    }
+}
+
+/// MessagePack: one self-delimiting value per message. A desynchronizing parse
+/// error ends the stream — binary framing cannot be resynchronized.
+fn read_msgpack_controls(reader: &mut dyn BufRead, tx: &SyncSender<Incoming>) {
+    loop {
+        let value = match read_msgpack(reader) {
+            MsgRead::Eof => return,
+            MsgRead::Fatal(message) => {
+                let event = Event::Error {
+                    code: "parse".to_string(),
+                    message,
+                };
+                let _ = tx.send(Incoming::ControlError(event));
+                return;
+            }
+            MsgRead::Value(value) => value,
+        };
+        let msg = match classify(value) {
+            Decoded::Control(control) => Incoming::Control(control),
+            Decoded::Error(error) => Incoming::ControlError(error),
+            Decoded::Ignore => {
+                tracing::debug!("ignoring unknown control message");
+                continue;
+            }
+        };
+        if tx.send(msg).is_err() {
+            return;
+        }
+    }
 }
 
 /// Read one `\n`-terminated line (newline included) into `buf`, buffering at

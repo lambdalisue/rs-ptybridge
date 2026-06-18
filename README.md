@@ -38,15 +38,20 @@ per line:
 The host sends control messages (input, resize, signal, ping, shutdown) on
 stdin.
 
+Pass `--format msgpack` to carry the same messages as MessagePack instead — more
+compact and cheaper to parse for the high-frequency `grid_line` traffic.
+
 ## Reference host
 
-A consumer reconstructs the screen from the JSONL stream. Two examples show how:
+A consumer reconstructs the screen from the event stream. The examples show how:
 
 - [`examples/passthrough.ts`](./examples/passthrough.ts) — a Deno host that
   reconstructs the screen as ANSI on the real terminal and forwards input, so
   `passthrough.ts -- claude` behaves as if `claude` ran directly.
 - [`examples/reference_render.rs`](./examples/reference_render.rs) — a minimal
   Rust consumer that repaints the screen text (display only).
+- [`examples/msgpack_render.ts`](./examples/msgpack_render.ts) — a minimal Deno
+  consumer of the `--format msgpack` stream (display only).
 
 ## License
 
