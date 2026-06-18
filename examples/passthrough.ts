@@ -6,7 +6,7 @@
 //
 // looks and behaves as if you ran `claude` directly: input is forwarded and the
 // emulated screen is repainted with colors, cursor, and title. It is the inverse
-// of the daemon — where `ptybridge` turns ANSI into screen-state JSONL, this
+// of the bridge — where `ptybridge` turns ANSI into screen-state JSONL, this
 // turns the JSONL screen state back into ANSI.
 //
 // This is a reference *host*: it holds the grid the protocol guarantees and
@@ -15,7 +15,7 @@
 // full-screen TUIs (the common case); a primary-screen scrolling program would
 // want a smarter strategy.
 //
-// Set PTYBRIDGE_BIN to the daemon binary (defaults to `ptybridge` on PATH).
+// Set PTYBRIDGE_BIN to the bridge binary (defaults to `ptybridge` on PATH).
 
 type Attrs = {
   fg?: number | null;
@@ -52,7 +52,7 @@ function sgr(a: Attrs | undefined): string {
   return `\x1b[${p.join(";")}m`;
 }
 
-/** Reconstructed screen: the grid the host renders, mirroring the daemon. */
+/** Reconstructed screen: the grid the host renders, mirroring the bridge. */
 class Host {
   cols = 0;
   rows = 0;
@@ -107,6 +107,11 @@ class Host {
         }
         break;
       }
+      case "scrollback_push":
+        // This host is a live-screen mirror: it repaints the visible grid onto
+        // the real terminal, which keeps its own scrollback. Committed lines are
+        // discarded here; a host backed by an editor buffer would append them.
+        break;
       case "grid_line": {
         const line = this.grid[ev.row];
         if (!line) break;
@@ -229,7 +234,7 @@ async function main() {
   };
   Deno.addSignalListener("SIGWINCH", onResize);
 
-  // Forward the real terminal's input to the daemon as base64 (binary-safe).
+  // Forward the real terminal's input to the bridge as base64 (binary-safe).
   const forwardInput = (async () => {
     const buf = new Uint8Array(4096);
     while (true) {
@@ -274,7 +279,7 @@ async function main() {
   Deno.stdin.setRaw(false);
   try {
     await writer.close();
-  } catch { /* daemon already gone */ }
+  } catch { /* bridge already gone */ }
   await child.status;
   forwardInput.catch(() => {});
   Deno.exit(code);

@@ -26,7 +26,7 @@ layer a module belongs to rather than pretending unit coverage everywhere.
 | --- | --- | --- |
 | **Unit TDD** (red→green→refactor) | `codec` JSONL roundtrip, `protocol` serde tagging, `render::encode_cells` (grapheme/wide/repeat invariant), diff logic against a fake grid | `cargo test` |
 | **Snapshot** | known ANSI bytes → Event stream (needs vterm wired) | `insta`, fixtures under `tests/` |
-| **Integration + visual** | real PTY spawn, `examples/reference_render` | manual run; not unit-covered |
+| **Integration + visual** | real PTY spawn, `examples/jsonl_render` | manual run; not unit-covered |
 
 A "screen reproduced by eye" acceptance criterion is a visual check, not a unit
 test — treat it as such.

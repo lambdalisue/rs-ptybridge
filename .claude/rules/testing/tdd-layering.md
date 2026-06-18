@@ -18,7 +18,7 @@ unit coverage where it does not fit.
 | `palette` | Unit TDD | neutral color → RGB; default → none |
 | `term` | Snapshot (`insta`) | ANSI fixtures → Event stream; vterm wired |
 | `pty`, `engine`, `session` | Integration | real PTY spawn |
-| `examples/reference_render` | Visual | screen reproduced by eye; not a unit test |
+| `examples/jsonl_render` | Visual | screen reproduced by eye; not a unit test |
 
 ## The cell invariant (test it hardest)
 

@@ -59,13 +59,19 @@ it and drops the `scrollback` feature). See `scrollback_push` in
 
 A consumer reconstructs the screen from the event stream. The examples show how:
 
-- [`examples/passthrough.ts`](./examples/passthrough.ts) — a Deno host that
-  reconstructs the screen as ANSI on the real terminal and forwards input, so
-  `passthrough.ts -- claude` behaves as if `claude` ran directly.
-- [`examples/reference_render.rs`](./examples/reference_render.rs) — a minimal
-  Rust consumer that repaints the screen text (display only).
-- [`examples/msgpack_render.ts`](./examples/msgpack_render.ts) — a minimal Deno
-  consumer of the `--format msgpack` stream (display only).
+All examples are Deno scripts (`deno run --allow-run --allow-env`):
+
+- [`examples/jsonl_render.ts`](./examples/jsonl_render.ts) — a minimal consumer
+  of the default JSONL stream that repaints the screen text (display only).
+- [`examples/msgpack_render.ts`](./examples/msgpack_render.ts) — the same
+  minimal consumer for the `--format msgpack` stream (display only).
+- [`examples/scrollback_render.ts`](./examples/scrollback_render.ts) — appends
+  `scrollback_push` lines above a live region and, on exit, dumps the full
+  transcript, showing scrolled-off history preserved (the Vim/Neovim-buffer
+  model).
+- [`examples/passthrough.ts`](./examples/passthrough.ts) — a full interactive
+  host that reconstructs the screen as ANSI on the real terminal and forwards
+  input, so `passthrough.ts -- claude` behaves as if `claude` ran directly.
 
 ## License
 
