@@ -1,0 +1,63 @@
+---
+source: tests/snapshot.rs
+expression: "frame(6, 1, b\"\\x1b[38;5;196;48;5;21mA\\x1b[0m\\x1b[38;2;10;20;30mB\\x1b[0m\")"
+---
+[
+  {
+    "t": "default_colors",
+    "fg": 13684944,
+    "bg": 0,
+    "sp": 13684944
+  },
+  {
+    "t": "hl_attr",
+    "id": 1,
+    "fg": 16711680,
+    "bg": 255,
+    "sp": null
+  },
+  {
+    "t": "hl_attr",
+    "id": 2,
+    "fg": 660510,
+    "bg": null,
+    "sp": null
+  },
+  {
+    "t": "grid_clear"
+  },
+  {
+    "t": "grid_line",
+    "row": 0,
+    "col": 0,
+    "cells": [
+      [
+        "A",
+        1
+      ],
+      [
+        "B",
+        2
+      ],
+      [
+        " ",
+        0,
+        4
+      ]
+    ]
+  },
+  {
+    "t": "cursor",
+    "row": 0,
+    "col": 2,
+    "visible": true,
+    "shape": "block"
+  },
+  {
+    "t": "mode",
+    "alt_screen": false
+  },
+  {
+    "t": "flush"
+  }
+]

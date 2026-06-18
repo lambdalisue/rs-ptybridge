@@ -1,0 +1,63 @@
+---
+source: tests/snapshot.rs
+expression: "frame(6, 2, b\"\\x1b[?1049hALT\")"
+---
+[
+  {
+    "t": "default_colors",
+    "fg": 13684944,
+    "bg": 0,
+    "sp": 13684944
+  },
+  {
+    "t": "grid_clear"
+  },
+  {
+    "t": "grid_line",
+    "row": 0,
+    "col": 0,
+    "cells": [
+      [
+        "A",
+        0
+      ],
+      [
+        "L"
+      ],
+      [
+        "T"
+      ],
+      [
+        " ",
+        0,
+        3
+      ]
+    ]
+  },
+  {
+    "t": "grid_line",
+    "row": 1,
+    "col": 0,
+    "cells": [
+      [
+        " ",
+        0,
+        6
+      ]
+    ]
+  },
+  {
+    "t": "cursor",
+    "row": 0,
+    "col": 3,
+    "visible": true,
+    "shape": "block"
+  },
+  {
+    "t": "mode",
+    "alt_screen": true
+  },
+  {
+    "t": "flush"
+  }
+]

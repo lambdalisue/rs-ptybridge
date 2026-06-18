@@ -1,0 +1,51 @@
+---
+source: tests/snapshot.rs
+expression: "frame(6, 1, b\"\\x1b(0lqk\\x1b(B\")"
+---
+[
+  {
+    "t": "default_colors",
+    "fg": 13684944,
+    "bg": 0,
+    "sp": 13684944
+  },
+  {
+    "t": "grid_clear"
+  },
+  {
+    "t": "grid_line",
+    "row": 0,
+    "col": 0,
+    "cells": [
+      [
+        "┌",
+        0
+      ],
+      [
+        "─"
+      ],
+      [
+        "┐"
+      ],
+      [
+        " ",
+        0,
+        3
+      ]
+    ]
+  },
+  {
+    "t": "cursor",
+    "row": 0,
+    "col": 3,
+    "visible": true,
+    "shape": "block"
+  },
+  {
+    "t": "mode",
+    "alt_screen": false
+  },
+  {
+    "t": "flush"
+  }
+]

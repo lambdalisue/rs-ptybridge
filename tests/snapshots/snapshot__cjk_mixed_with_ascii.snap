@@ -1,0 +1,63 @@
+---
+source: tests/snapshot.rs
+expression: "frame(10, 1, \"ab日本x\".as_bytes())"
+---
+[
+  {
+    "t": "default_colors",
+    "fg": 13684944,
+    "bg": 0,
+    "sp": 13684944
+  },
+  {
+    "t": "grid_clear"
+  },
+  {
+    "t": "grid_line",
+    "row": 0,
+    "col": 0,
+    "cells": [
+      [
+        "a",
+        0
+      ],
+      [
+        "b"
+      ],
+      [
+        "日"
+      ],
+      [
+        ""
+      ],
+      [
+        "本"
+      ],
+      [
+        ""
+      ],
+      [
+        "x"
+      ],
+      [
+        " ",
+        0,
+        3
+      ]
+    ]
+  },
+  {
+    "t": "cursor",
+    "row": 0,
+    "col": 7,
+    "visible": true,
+    "shape": "block"
+  },
+  {
+    "t": "mode",
+    "alt_screen": false
+  },
+  {
+    "t": "flush"
+  }
+]

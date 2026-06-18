@@ -1,0 +1,49 @@
+---
+source: tests/snapshot.rs
+expression: "frame(6, 1, b\"\\x1b]0;hi\\x07X\")"
+---
+[
+  {
+    "t": "default_colors",
+    "fg": 13684944,
+    "bg": 0,
+    "sp": 13684944
+  },
+  {
+    "t": "grid_clear"
+  },
+  {
+    "t": "grid_line",
+    "row": 0,
+    "col": 0,
+    "cells": [
+      [
+        "X",
+        0
+      ],
+      [
+        " ",
+        0,
+        5
+      ]
+    ]
+  },
+  {
+    "t": "cursor",
+    "row": 0,
+    "col": 1,
+    "visible": true,
+    "shape": "block"
+  },
+  {
+    "t": "mode",
+    "alt_screen": false
+  },
+  {
+    "t": "title",
+    "text": "hi"
+  },
+  {
+    "t": "flush"
+  }
+]

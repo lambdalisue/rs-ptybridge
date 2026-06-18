@@ -1,0 +1,84 @@
+---
+source: tests/snapshot.rs
+expression: "frame(12, 2, b\"hello world\")"
+---
+[
+  {
+    "t": "default_colors",
+    "fg": 13684944,
+    "bg": 0,
+    "sp": 13684944
+  },
+  {
+    "t": "grid_clear"
+  },
+  {
+    "t": "grid_line",
+    "row": 0,
+    "col": 0,
+    "cells": [
+      [
+        "h",
+        0
+      ],
+      [
+        "e"
+      ],
+      [
+        "l",
+        0,
+        2
+      ],
+      [
+        "o"
+      ],
+      [
+        " "
+      ],
+      [
+        "w"
+      ],
+      [
+        "o"
+      ],
+      [
+        "r"
+      ],
+      [
+        "l"
+      ],
+      [
+        "d"
+      ],
+      [
+        " "
+      ]
+    ]
+  },
+  {
+    "t": "grid_line",
+    "row": 1,
+    "col": 0,
+    "cells": [
+      [
+        " ",
+        0,
+        12
+      ]
+    ]
+  },
+  {
+    "t": "cursor",
+    "row": 0,
+    "col": 11,
+    "visible": true,
+    "shape": "block"
+  },
+  {
+    "t": "mode",
+    "alt_screen": false
+  },
+  {
+    "t": "flush"
+  }
+]

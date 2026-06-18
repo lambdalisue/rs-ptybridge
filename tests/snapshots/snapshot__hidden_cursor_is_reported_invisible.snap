@@ -1,0 +1,45 @@
+---
+source: tests/snapshot.rs
+expression: "frame(4, 1, b\"\\x1b[?25lX\")"
+---
+[
+  {
+    "t": "default_colors",
+    "fg": 13684944,
+    "bg": 0,
+    "sp": 13684944
+  },
+  {
+    "t": "grid_clear"
+  },
+  {
+    "t": "grid_line",
+    "row": 0,
+    "col": 0,
+    "cells": [
+      [
+        "X",
+        0
+      ],
+      [
+        " ",
+        0,
+        3
+      ]
+    ]
+  },
+  {
+    "t": "cursor",
+    "row": 0,
+    "col": 1,
+    "visible": false,
+    "shape": "block"
+  },
+  {
+    "t": "mode",
+    "alt_screen": false
+  },
+  {
+    "t": "flush"
+  }
+]

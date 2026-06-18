@@ -1,0 +1,77 @@
+---
+source: tests/snapshot.rs
+expression: "frame(12, 1, b\"\\x1b[1;31mERR\\x1b[0m \\x1b[4;44mok\\x1b[0m\")"
+---
+[
+  {
+    "t": "default_colors",
+    "fg": 13684944,
+    "bg": 0,
+    "sp": 13684944
+  },
+  {
+    "t": "hl_attr",
+    "id": 1,
+    "fg": 8388608,
+    "bg": null,
+    "sp": null,
+    "bold": true
+  },
+  {
+    "t": "hl_attr",
+    "id": 2,
+    "fg": null,
+    "bg": 128,
+    "sp": null,
+    "underline": true
+  },
+  {
+    "t": "grid_clear"
+  },
+  {
+    "t": "grid_line",
+    "row": 0,
+    "col": 0,
+    "cells": [
+      [
+        "E",
+        1
+      ],
+      [
+        "R",
+        1,
+        2
+      ],
+      [
+        " ",
+        0
+      ],
+      [
+        "o",
+        2
+      ],
+      [
+        "k"
+      ],
+      [
+        " ",
+        0,
+        6
+      ]
+    ]
+  },
+  {
+    "t": "cursor",
+    "row": 0,
+    "col": 6,
+    "visible": true,
+    "shape": "block"
+  },
+  {
+    "t": "mode",
+    "alt_screen": false
+  },
+  {
+    "t": "flush"
+  }
+]

@@ -1,0 +1,86 @@
+---
+source: tests/snapshot.rs
+expression: "frame(6, 3, b\"ab\\r\\ncd\\r\\nef\")"
+---
+[
+  {
+    "t": "default_colors",
+    "fg": 13684944,
+    "bg": 0,
+    "sp": 13684944
+  },
+  {
+    "t": "grid_clear"
+  },
+  {
+    "t": "grid_line",
+    "row": 0,
+    "col": 0,
+    "cells": [
+      [
+        "a",
+        0
+      ],
+      [
+        "b"
+      ],
+      [
+        " ",
+        0,
+        4
+      ]
+    ]
+  },
+  {
+    "t": "grid_line",
+    "row": 1,
+    "col": 0,
+    "cells": [
+      [
+        "c",
+        0
+      ],
+      [
+        "d"
+      ],
+      [
+        " ",
+        0,
+        4
+      ]
+    ]
+  },
+  {
+    "t": "grid_line",
+    "row": 2,
+    "col": 0,
+    "cells": [
+      [
+        "e",
+        0
+      ],
+      [
+        "f"
+      ],
+      [
+        " ",
+        0,
+        4
+      ]
+    ]
+  },
+  {
+    "t": "cursor",
+    "row": 2,
+    "col": 2,
+    "visible": true,
+    "shape": "block"
+  },
+  {
+    "t": "mode",
+    "alt_screen": false
+  },
+  {
+    "t": "flush"
+  }
+]

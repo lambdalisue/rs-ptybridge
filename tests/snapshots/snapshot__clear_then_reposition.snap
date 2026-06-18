@@ -1,0 +1,89 @@
+---
+source: tests/snapshot.rs
+expression: "frame(8, 3, b\"\\x1b[2J\\x1b[Htop\\x1b[2;3Hmid\")"
+---
+[
+  {
+    "t": "default_colors",
+    "fg": 13684944,
+    "bg": 0,
+    "sp": 13684944
+  },
+  {
+    "t": "grid_clear"
+  },
+  {
+    "t": "grid_line",
+    "row": 0,
+    "col": 0,
+    "cells": [
+      [
+        "t",
+        0
+      ],
+      [
+        "o"
+      ],
+      [
+        "p"
+      ],
+      [
+        " ",
+        0,
+        5
+      ]
+    ]
+  },
+  {
+    "t": "grid_line",
+    "row": 1,
+    "col": 0,
+    "cells": [
+      [
+        " ",
+        0,
+        2
+      ],
+      [
+        "m"
+      ],
+      [
+        "i"
+      ],
+      [
+        "d"
+      ],
+      [
+        " ",
+        0,
+        3
+      ]
+    ]
+  },
+  {
+    "t": "grid_line",
+    "row": 2,
+    "col": 0,
+    "cells": [
+      [
+        " ",
+        0,
+        8
+      ]
+    ]
+  },
+  {
+    "t": "cursor",
+    "row": 1,
+    "col": 5,
+    "visible": true,
+    "shape": "block"
+  },
+  {
+    "t": "mode",
+    "alt_screen": false
+  },
+  {
+    "t": "flush"
+  }
+]
