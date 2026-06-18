@@ -1,0 +1,37 @@
+[package]
+name = "ptybridge"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Agent-agnostic, editor-agnostic headless terminal CLI that streams screen state as a JSONL protocol."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/lambdalisue/rs-ptybridge"
+readme = "README.md"
+keywords = ["pty", "terminal", "vterm", "jsonl", "headless"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "ptybridge"
+path = "src/main.rs"
+
+[lib]
+name = "ptybridge"
+path = "src/lib.rs"
+
+[dependencies]
+clap = { version = "4.6", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+portable-pty = "0.9"
+alacritty_terminal = "0.26"
+base64 = "0.22"
+
+[dev-dependencies]
+insta = { version = "1.48", features = ["json"] }
+proptest = "1.11"
+
+[target."cfg(unix)".dependencies]
+libc = "0.2"
