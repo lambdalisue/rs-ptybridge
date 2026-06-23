@@ -1,6 +1,14 @@
 {
   description = "Agent-agnostic, editor-agnostic headless terminal CLI that streams screen state as a JSONL protocol";
 
+  # Pull prebuilt outputs from the project's binary cache so `nix develop` and
+  # `nix run` skip recompiling dependencies. CI populates it (see the nix job in
+  # .github/workflows/ci.yml).
+  nixConfig = {
+    extra-substituters = [ "https://ptybridge.cachix.org" ];
+    extra-trusted-public-keys = [ "ptybridge.cachix.org-1:De4ZCB3lToRa/TSC/6PGuTAyPbF6GG8KWUUnN8mT8qg=" ];
+  };
+
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     crane.url = "github:ipetkov/crane";
