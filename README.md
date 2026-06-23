@@ -27,6 +27,13 @@ at `hello.v = 1`.
 $ ptybridge -- bash
 ```
 
+With [Nix](https://nixos.org/) (flakes enabled) you can run it without
+installing anything:
+
+```console
+$ nix run github:lambdalisue/rs-ptybridge -- bash
+```
+
 `ptybridge` runs `bash` on a PTY and emits JSONL events on stdout, one object
 per line:
 
@@ -72,6 +79,21 @@ All examples are Deno scripts (`deno run --allow-run --allow-env`):
 - [`examples/passthrough.ts`](./examples/passthrough.ts) — a full interactive
   host that reconstructs the screen as ANSI on the real terminal and forwards
   input, so `passthrough.ts -- claude` behaves as if `claude` ran directly.
+
+## Development
+
+The toolchain (Rust, Deno, `just`, `rust-analyzer`) is managed with a Nix
+flake, so no manual installation is required:
+
+```console
+$ nix develop          # drop into a shell with every tool on PATH
+$ just verify          # format-check, lint, type-check, and test
+```
+
+With [direnv](https://direnv.net/), `cp .envrc.sample .envrc && direnv allow`
+loads the same environment automatically on `cd`. Without Nix, install Rust
+(see `rust-version` in `Cargo.toml`) and [Deno](https://deno.com/) yourself;
+the `cargo` and `deno` workflows are unchanged.
 
 ## License
 

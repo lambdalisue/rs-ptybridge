@@ -1,3 +1,7 @@
 /target
 **/*.rs.bk
 *.pdb
+
+# Nix
+/result
+.direnv/
